@@ -1,0 +1,202 @@
+---
+title: "miRNA Differential Expression in Latinos"
+author: "Jenny Smith"
+date: "August 16, 2017"
+output: html_document
+---
+
+
+Purpose: Differential expression of miRNAs in the latino/a population of AML. 
+Referece: https://github.com/bcgsc/mirna
+
+
+```{r setup}
+library(knitr)
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=50),tidy=TRUE, fig.align='center', fig.height = 4, fig.width = 6)
+knitr::opts_knit$set(root.dir = '~/miRNAseq_Analysis/analysis/2017.08.16_AML_DE_Latinos/')
+```
+
+
+```{r message = FALSE, warning=FALSE}
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(magrittr)
+library(reshape2)
+library(xtable)
+getwd()
+```
+
+```{r}
+source("~/scripts/miRNAseq_Analysis/DifferentialExpression_miRNAseq_pipeline.r")
+source("~/scripts/miRNAseq_Analysis/calcWilcoxTest.R")
+```
+
+
+#Read in the Expression Matrix
+```{r}
+mirna.0531 <- read.table("expn_matrix_mimat_norm_target_id.txt", header = TRUE, sep="\t", stringsAsFactors = FALSE, row.names = 1)
+head(mirna.0531[,1:5])
+```
+```{r}
+dim(mirna.0531)
+```
+
+```{r}
+mirna.BM <- read.table("expn_matrix_mimat_norm.txt", sep="\t", header = TRUE, stringsAsFactors = FALSE, row.names = 1)
+head(mirna.BM[,1:5])
+```
+
+```{r}
+dim(mirna.BM)
+```
+
+
+#Read in the clinical data
+
+```{r}
+cde <- read.csv("~/reference_mapping-files/TARGET_AML_current_asof_june30_2016_UPDATED_RhondaEdit_2017.06.08.csv", stringsAsFactors = FALSE, row.names = 1)
+dim(cde)
+```
+
+
+```{r}
+head(cde[,1:5])
+```
+
+
+#Subset for only diagnostic Samples
+
+```{r}
+barcodes <- colnames(mirna.0531)
+dx <- barcodes[grepl("20.+[3,9]A", barcodes)] #dx, diagnostic, from target 20 study
+rl <- barcodes[grepl("20.+[0,4]A", barcodes)] #rl, relapse, from target 20
+id <- barcodes[grepl("21.+[1,2]A", barcodes)] #induction failure, id from target 21
+```
+
+
+```{r}
+dx.mirna <- mirna.0531[,dx]
+colnames(dx.mirna) <- gsub("^.+\\.([A-Z]{6})\\..+","\\1", colnames(dx.mirna)) 
+dim(dx.mirna)
+```
+
+```{r}
+head(dx.mirna[,1:5])
+```
+
+#Define Phenotypes
+
+```{r}
+pheno <- cde %>% 
+  select(TARGET.USI.1, Race, Ethnicity) %>%
+  filter(TARGET.USI.1 %in% colnames(dx.mirna)) %>% 
+  mutate(Hispanic=ifelse(Ethnicity == "Hispanic or Latino", "latino", "other")) %>%
+  set_rownames(.$TARGET.USI.1)
+
+phenovector <- pheno$Hispanic %>% set_names(pheno$TARGET.USI.1)
+phenovector[1:5]
+```
+
+There are 119 latino or hispanic AML patients, and 495 other patients. 
+
+```{r results="asis"}
+kable(table(pheno[,2:3]))
+```
+
+
+#Perform Differential Expression Analysis
+
+##Limma 
+```{r message=FALSE}
+DEGs <- twoGroups_DEGs(dx.mirna, pheno, "Hispanic", ref="other", logCPM=FALSE)
+```
+
+```{r}
+DEGs$DE$DE
+```
+
+```{r}
+DEGs$PCA$pca_plot
+```
+
+
+Results: There is only one differentially expressed miRNA, and the PCA plot of the top varied genes shows that the latino population is not very different from the others. 
+
+
+
+##Wilcox Test
+
+
+```{r}
+groups <- GroupIDs(pheno,"Hispanic")
+summary(groups)
+```
+
+Note: Input counts that have 1 RPM for at least 5% of samples. 
+
+```{r}
+DE.wilcox <- calcWilcoxTest(DEGs$DE$dge, 
+                            groups$latino, groups$other, 
+                            aname = "latino", bname = "other",log=T)
+head(DE.wilcox)
+```
+
+```{r}
+wilcox.sig <- DE.wilcox %>% 
+  filter(adj_p_val <= 0.05)
+
+dim(wilcox.sig)
+```
+
+
+
+#Compare Non-Hispanic white versus Hispanic white
+
+```{r}
+pheno2 <- pheno %>% 
+  filter(Race == "White", Ethnicity != "Unknown") %>% 
+  mutate(Hispanic=ifelse(Hispanic == "other", "notLatino", Hispanic)) %>%
+  set_rownames(.$TARGET.USI.1)
+
+dx.mirna2 <- dx.mirna[,rownames(pheno2)]
+
+dim(pheno2)
+dim(dx.mirna2)
+```
+```{r results="asis"}
+#Factor levels
+kable(table(pheno2[,2:3]))
+```
+
+```{r}
+DEGs2 <- twoGroups_DEGs(dx.mirna2, pheno2, "Hispanic", ref="notLatino", logCPM = FALSE)
+```
+
+```{r}
+DEGs2$DE$DE
+```
+
+```{r}
+DEGs2$PCA$pca_plot
+```
+
+##Wilcox Test
+
+```{r}
+groups2 <- GroupIDs(pheno2, "Hispanic") 
+```
+
+```{r}
+DE.wilcox2 <- calcWilcoxTest(DEGs2$DE$dge, groups2$latino, groups2$notLatino, aname = "latino", 
+                             bname = "nonLatino", log=T)
+head(DE.wilcox2)
+```
+
+
+```{r}
+DE.wilcox2[which(DE.wilcox2$adj_p_val < 0.05), ]
+```
+
+
+
